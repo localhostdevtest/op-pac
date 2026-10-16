@@ -1,6 +1,6 @@
 # SPEC 01 — Cuatro fantasmas con comportamientos propios
 
-> **Estado:** Aprobado
+> **Estado:** Implementado
 > **Depende de:** —
 > **Fecha:** 2026-10-16
 > **Objetivo:** Que los cuatro fantasmas tengan comportamientos distintos y reconocibles, con el acosador persiguiendo agresivamente a Pac-Man por el camino más corto real (BFS).

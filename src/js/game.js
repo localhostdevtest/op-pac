@@ -13,6 +13,13 @@ const OPPOSITE = { left: 'right', right: 'left', up: 'down', down: 'up' };
 const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;    // 1/10 celda/frame
 
+// Power pellets / modo asustado.
+const PELLET_SCORE = 50;
+const FRIGHTENED_FRAMES = 360;       // 6 s a 60 fps
+const FRIGHTENED_SPEED = 0.05;       // 1/20 celda/frame, exacto para el grid snapping
+const FRIGHTENED_FLASH_FRAMES = 120; // ultimos 2 s
+const GHOST_SCORES = [ 200, 400, 800, 1600 ];
+
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
 function createGame() {
@@ -21,13 +28,15 @@ function createGame() {
   grid[ PACMAN_START.y ][ PACMAN_START.x ] = 0;
 
   let dots = 0;
-  for ( const row of grid ) for ( const v of row ) if ( v === 2 ) dots++;
+  for ( const row of grid ) for ( const v of row ) if ( v === 2 || v === 4 ) dots++;
 
   return {
     state: 'start',
     score: 0,
     lives: 3,
     dotsRemaining: dots,
+    frightenedTimer: 0, // frames restantes de susto; 0 = inactivo
+    ghostCombo: 0,      // fantasmas comidos en el susto actual
     grid,
     pacman: {
       x: PACMAN_START.x,
@@ -42,6 +51,7 @@ function createGame() {
       dir: 'up',
       speed: GHOST_SPEED,
       kind: g.kind,
+      frightened: false,
     } ) ),
   };
 }
@@ -80,6 +90,17 @@ function wrapTunnel( a, width ) {
   }
 }
 
+// Al comer una power pellet: todos los fantasmas se asustan e invierten su
+// direccion una vez (incluidos los de la pen y los recien revividos).
+function activateFright( game ) {
+  game.frightenedTimer = FRIGHTENED_FRAMES;
+  game.ghostCombo = 0;
+  game.ghosts.forEach( ( g ) => {
+    g.frightened = true;
+    g.dir = OPPOSITE[ g.dir ];
+  } );
+}
+
 function movePacman( game ) {
   const p = game.pacman;
   const grid = game.grid;
@@ -94,11 +115,17 @@ function movePacman( game ) {
       p.dir = p.nextDir;
       p.nextDir = null;
     }
-    // Comer dot.
-    if ( grid[ p.y ][ p.x ] === 2 ) {
+    // Comer dot o power pellet.
+    const tile = grid[ p.y ][ p.x ];
+    if ( tile === 2 ) {
       grid[ p.y ][ p.x ] = 0;
       game.score += 10;
       game.dotsRemaining--;
+    } else if ( tile === 4 ) {
+      grid[ p.y ][ p.x ] = 0;
+      game.score += PELLET_SCORE;
+      game.dotsRemaining--;
+      activateFright( game );
     }
     // Si no puede seguir, se detiene en la celda.
     if ( !canMove( grid, p.x, p.y, p.dir, 'pacman' ) ) return;
@@ -202,7 +229,9 @@ function decideGhost( game, g ) {
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ OPPOSITE[ g.dir ] ];
 
-  const target = ghostTarget( game, g );
+  const target = g.frightened
+    ? { x: Math.round( game.pacman.x ), y: Math.round( game.pacman.y ) }
+    : ghostTarget( game, g );
   const dist = bfsDistances( grid, target );
 
   const start = { x: Math.round( g.x ), y: Math.round( g.y ) };
@@ -218,11 +247,14 @@ function decideGhost( game, g ) {
   // Orden de preferencia en empate: seguir de frente; luego up, left, down, right.
   const ordered = [ g.dir, 'up', 'left', 'down', 'right' ].filter( ( dir ) => choices.includes( dir ) );
 
+  // Asustado huye: elige el vecino que maximiza la distancia BFS a Pac-Man,
+  // con el mismo orden de empate. Normal: la minimiza.
+  const fleeing = g.frightened;
   let best = ordered[ 0 ];
-  let bestDist = Infinity;
+  let bestDist = fleeing ? -Infinity : Infinity;
   for ( const dir of ordered ) {
     const d = distOf( dir );
-    if ( d < bestDist ) {
+    if ( fleeing ? d > bestDist : d < bestDist ) {
       best = dir;
       bestDist = d;
     }
@@ -242,8 +274,9 @@ function moveGhost( game, g ) {
   }
 
   const d = DIRS[ g.dir ];
-  g.x += d.x * g.speed;
-  g.y += d.y * g.speed;
+  const speed = g.frightened ? FRIGHTENED_SPEED : g.speed;
+  g.x += d.x * speed;
+  g.y += d.y * speed;
   wrapTunnel( g, width );
 }
 
@@ -253,10 +286,14 @@ function resetPositions( game ) {
   p.y = PACMAN_START.y;
   p.dir = 'left';
   p.nextDir = null;
+  // Perder una vida apaga el susto y resetea el combo.
+  game.frightenedTimer = 0;
+  game.ghostCombo = 0;
   game.ghosts.forEach( ( g, i ) => {
     g.x = GHOST_STARTS[ i ].x;
     g.y = GHOST_STARTS[ i ].y;
     g.dir = 'up';
+    g.frightened = false;
   } );
 }
 
@@ -268,8 +305,18 @@ function update( game ) {
   movePacman( game );
   game.ghosts.forEach( ( g ) => moveGhost( game, g ) );
 
-  for ( const g of game.ghosts ) {
-    if ( collides( game.pacman, g ) ) {
+  for ( let i = 0; i < game.ghosts.length; i++ ) {
+    const g = game.ghosts[ i ];
+    if ( !collides( game.pacman, g ) ) continue;
+    if ( g.frightened ) {
+      // Comido: puntos por combo y revive en su celda inicial de la pen.
+      game.score += GHOST_SCORES[ Math.min( game.ghostCombo, 3 ) ];
+      game.ghostCombo++;
+      g.x = GHOST_STARTS[ i ].x;
+      g.y = GHOST_STARTS[ i ].y;
+      g.dir = 'up';
+      g.frightened = false;
+    } else {
       game.lives--;
       if ( game.lives <= 0 ) {
         game.state = 'lost';
@@ -277,6 +324,15 @@ function update( game ) {
       }
       resetPositions( game );
       break;
+    }
+  }
+
+  // El timer se decrementa tras resolver colisiones: el frame limite favorece
+  // al jugador. Al llegar a 0, todos vuelven a la persecucion normal.
+  if ( game.frightenedTimer > 0 ) {
+    game.frightenedTimer--;
+    if ( game.frightenedTimer === 0 ) {
+      game.ghosts.forEach( ( g ) => { g.frightened = false; } );
     }
   }
 

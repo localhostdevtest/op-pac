@@ -5,6 +5,8 @@ const TILE = 20;
 const WALL_COLOR = '#2121ff';
 const DOOR_COLOR = '#ffb8ff';
 const DOT_COLOR = '#ffb897';
+const FRIGHTENED_COLOR = '#2121ff';     // azul clasico del fantasma asustado
+const FRIGHTENED_FLASH_COLOR = '#ffffff';
 
 function cellCenter( x, y ) {
   return { cx: x * TILE + TILE / 2, cy: y * TILE + TILE / 2 };
@@ -70,10 +72,12 @@ function drawDots( ctx, grid ) {
   ctx.fillStyle = DOT_COLOR;
   for ( let y = 0; y < grid.length; y++ ) {
     for ( let x = 0; x < grid[ 0 ].length; x++ ) {
-      if ( grid[ y ][ x ] !== 2 ) continue;
+      const tile = grid[ y ][ x ];
+      if ( tile !== 2 && tile !== 4 ) continue;
       const { cx, cy } = cellCenter( x, y );
+      const r = tile === 4 ? 5.5 : 2.5; // power pellet mas grande
       ctx.beginPath();
-      ctx.arc( cx, cy, 2.5, 0, Math.PI * 2 );
+      ctx.arc( cx, cy, r, 0, Math.PI * 2 );
       ctx.fill();
     }
   }
@@ -98,13 +102,25 @@ function drawPacman( ctx, p, frame ) {
   ctx.fill();
 }
 
-function drawGhost( ctx, g, color ) {
+function drawGhost( ctx, g, game ) {
   const { cx, cy } = cellCenter( g.x, g.y );
   const r = TILE / 2 - 1;
   const top = cy - r;
   const bottom = cy + r;
   const left = cx - r;
   const right = cx + r;
+
+  // Asustado: azul; en los ultimos FRIGHTENED_FLASH_FRAMES parpadea azul/blanco.
+  let color = KIND_COLORS[ g.kind ] || '#ff0000';
+  if ( g.frightened ) {
+    color = FRIGHTENED_COLOR;
+    if (
+      game.frightenedTimer <= FRIGHTENED_FLASH_FRAMES &&
+      Math.floor( game.frightenedTimer / 15 ) % 2 === 0
+    ) {
+      color = FRIGHTENED_FLASH_COLOR;
+    }
+  }
 
   ctx.fillStyle = color;
   ctx.beginPath();
@@ -164,7 +180,7 @@ function draw( ctx, game, frame ) {
   drawDoor( ctx, grid );
   drawDots( ctx, grid );
   drawPacman( ctx, game.pacman, frame );
-  game.ghosts.forEach( ( g ) => drawGhost( ctx, g, KIND_COLORS[ g.kind ] || '#ff0000' ) );
+  game.ghosts.forEach( ( g ) => drawGhost( ctx, g, game ) );
   drawHUD( ctx, game, W );
 }
 
