@@ -110,35 +110,124 @@ function movePacman( game ) {
   wrapTunnel( p, width );
 }
 
-function decideGhost( game, g ) {
+// Mapa de distancias BFS (en celdas) desde target hacia cada celda
+// transitable para fantasmas. Modela el wrap del tunel. Si target cae en
+// muro/puerta, siembra desde la celda transitable mas cercana (Manhattan).
+function bfsDistances( grid, target ) {
+  const H = grid.length;
+  const W = grid[ 0 ].length;
+  const dist = new Map();
+  const key = ( x, y ) => y * W + x;
+
+  let start = target;
+  if ( isWall( grid, start.x, start.y, 'ghost' ) ) {
+    let best = Infinity;
+    for ( let y = 0; y < H; y++ ) {
+      for ( let x = 0; x < W; x++ ) {
+        if ( isWall( grid, x, y, 'ghost' ) ) continue;
+        const d = Math.abs( x - target.x ) + Math.abs( y - target.y );
+        if ( d < best ) {
+          best = d;
+          start = { x, y };
+        }
+      }
+    }
+  }
+
+  const queue = [ start ];
+  dist.set( key( start.x, start.y ), 0 );
+  for ( let i = 0; i < queue.length; i++ ) {
+    const c = queue[ i ];
+    const d = dist.get( key( c.x, c.y ) );
+    for ( const name of Object.keys( DIRS ) ) {
+      const dir = DIRS[ name ];
+      const nx = c.x + dir.x;
+      const ny = c.y + dir.y;
+      if ( ny < 0 || ny >= H ) continue;
+      // En la fila del tunel se envuelve horizontalmente; en el resto, no.
+      if ( nx < 0 || nx >= W ) {
+        if ( c.y !== TUNNEL_ROW ) continue;
+      }
+      const wrapped = ( ( nx % W ) + W ) % W;
+      if ( isWall( grid, wrapped, ny, 'ghost' ) ) continue;
+      const k = key( wrapped, ny );
+      if ( dist.has( k ) ) continue;
+      dist.set( k, d + 1 );
+      queue.push( { x: wrapped, y: ny } );
+    }
+  }
+  return dist;
+}
+
+function clampCell( c, grid ) {
+  return {
+    x: Math.max( 0, Math.min( grid[ 0 ].length - 1, c.x ) ),
+    y: Math.max( 0, Math.min( grid.length - 1, c.y ) ),
+  };
+}
+
+// Celda objetivo segun el comportamiento del fantasma.
+function ghostTarget( game, g ) {
   const grid = game.grid;
   const p = game.pacman;
+  const cell = { x: Math.round( p.x ), y: Math.round( p.y ) };
+  const d = DIRS[ p.dir ];
+
+  if ( g.kind === 'ambusher' ) {
+    return clampCell( { x: cell.x + 4 * d.x, y: cell.y + 4 * d.y }, grid );
+  }
+  if ( g.kind === 'flanker' ) {
+    const ahead = { x: cell.x + 2 * d.x, y: cell.y + 2 * d.y };
+    const hunter = game.ghosts.find( ( o ) => o.kind === 'hunter' );
+    const hx = hunter ? Math.round( hunter.x ) : cell.x;
+    const hy = hunter ? Math.round( hunter.y ) : cell.y;
+    return clampCell( { x: 2 * ahead.x - hx, y: 2 * ahead.y - hy }, grid );
+  }
+  if ( g.kind === 'shy' ) {
+    const manhattan = Math.abs( g.x - p.x ) + Math.abs( g.y - p.y );
+    if ( manhattan > 8 ) return cell;
+    return { x: 1, y: 29 };
+  }
+  return cell; // hunter: celda exacta de Pac-Man
+}
+
+// Elige la direccion con menor distancia BFS al objetivo.
+// Empate: seguir de frente; luego orden fijo up, left, down, right.
+function decideGhost( game, g ) {
+  const grid = game.grid;
 
   const options = Object.keys( DIRS ).filter(
     ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
   );
   // Sin salida (callejon): permitir el giro de 180.
-  const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
+  const choices = options.length ? options : [ OPPOSITE[ g.dir ] ];
 
-  if ( g.kind === 'hunter' ) {
-    const px = Math.round( p.x );
-    const py = Math.round( p.y );
-    let best = choices[ 0 ];
-    let bestDist = Infinity;
-    for ( const dir of choices ) {
-      const d = DIRS[ dir ];
-      const nx = g.x + d.x;
-      const ny = g.y + d.y;
-      const dist = Math.abs( nx - px ) + Math.abs( ny - py );
-      if ( dist < bestDist ) {
-        bestDist = dist;
-        best = dir;
-      }
+  const target = ghostTarget( game, g );
+  const dist = bfsDistances( grid, target );
+
+  const start = { x: Math.round( g.x ), y: Math.round( g.y ) };
+  const distOf = ( dir ) => {
+    const d = DIRS[ dir ];
+    const nx = start.x + d.x;
+    const ny = start.y + d.y;
+    const wrapped = ( ( nx % grid[ 0 ].length ) + grid[ 0 ].length ) % grid[ 0 ].length;
+    const k = ny * grid[ 0 ].length + wrapped;
+    return dist.has( k ) ? dist.get( k ) : Infinity;
+  };
+
+  // Orden de preferencia en empate: seguir de frente; luego up, left, down, right.
+  const ordered = [ g.dir, 'up', 'left', 'down', 'right' ].filter( ( dir ) => choices.includes( dir ) );
+
+  let best = ordered[ 0 ];
+  let bestDist = Infinity;
+  for ( const dir of ordered ) {
+    const d = distOf( dir );
+    if ( d < bestDist ) {
+      best = dir;
+      bestDist = d;
     }
-    g.dir = best;
-  } else {
-    g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
   }
+  g.dir = best;
 }
 
 function moveGhost( game, g ) {
