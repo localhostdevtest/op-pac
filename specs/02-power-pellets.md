@@ -1,6 +1,6 @@
 # SPEC 02 — Power pellets y modo asustado
 
-> **Estado:** Borrador
+> **Estado:** Aprobado
 > **Depende de:** SPEC 01
 > **Fecha:** 2026-10-16
 > **Objetivo:** Agregar 4 power pellets (una por esquina clásica) que, al comerse, activan 6 segundos de modo asustado con fantasmas azules, comestibles y puntaje por combo.
